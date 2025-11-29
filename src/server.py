@@ -1,0 +1,133 @@
+import socket
+import threading
+
+from src.constants import (
+    SERVER_PORT,
+    BUFFER_SIZE,
+    CRLF,
+    PROTOCOL_VERSION,
+    STATUS_OK,
+    STATUS_BAD_REQUEST,
+    STATUS_NOT_FOUND,
+    STATUS_VERSION_NOT_SUPPORTED,
+    METHOD_ADD,
+    METHOD_LOOKUP,
+    METHOD_LIST,
+)
+from src.protocol import parse_p2s_request, format_p2s_response
+
+
+# In-memory database
+peers = {}  # hostname -> upload port
+index = []  # list of tuples: (rfc_number, title, hostname, port)
+db_lock = threading.Lock()
+
+
+def _recv_one_message(conn: socket.socket) -> str | None:
+    """
+    Read until we get CRLFCRLF, return the message text (including headers),
+    or None if the connection closed.
+    """
+    buf = b""
+    while True:
+        chunk = conn.recv(BUFFER_SIZE)
+        if not chunk:
+            return None
+        buf += chunk
+        if b"\r\n\r\n" in buf:
+            msg, _rest = buf.split(b"\r\n\r\n", 1)
+            # Add back the delimiter so protocol parsing sees the blank line end.
+            return (msg + b"\r\n\r\n").decode("utf-8", errors="replace")
+
+
+def _remove_all_for_host(hostname: str):
+    global index, peers
+    if not hostname:
+        return
+    with db_lock:
+        if hostname in peers:
+            del peers[hostname]
+        index = [rec for rec in index if rec[2] != hostname]
+
+
+def _handle_peer(conn: socket.socket, addr):
+    announced_host = None
+    try:
+        while True:
+            msg = _recv_one_message(conn)
+            if msg is None:
+                break  # peer disconnected
+
+            req = parse_p2s_request(msg)
+            if req is None:
+                conn.sendall(format_p2s_response(STATUS_BAD_REQUEST).encode("utf-8"))
+                continue
+
+            if req["version"] != PROTOCOL_VERSION:
+                conn.sendall(format_p2s_response(STATUS_VERSION_NOT_SUPPORTED).encode("utf-8"))
+                continue
+
+            method = req["method"]
+            host = req["host"]
+            port = req["port"]
+            title = req.get("title", "")
+            announced_host = host
+
+            if method == METHOD_ADD:
+                rfc_number = req["rfc_number"]
+
+                with db_lock:
+                    # Keep peer list updated
+                    peers[host] = port
+
+                    # Remove duplicate (same host, same rfc) then add newest to front
+                    index[:] = [rec for rec in index if not (rec[0] == rfc_number and rec[2] == host)]
+                    index.insert(0, (rfc_number, title, host, port))
+
+                # Echo back the provided info
+                conn.sendall(format_p2s_response(STATUS_OK, [(rfc_number, title, host, port)]).encode("utf-8"))
+
+            elif method == METHOD_LOOKUP:
+                rfc_number = req["rfc_number"]
+                with db_lock:
+                    matches = [rec for rec in index if rec[0] == rfc_number]
+
+                if not matches:
+                    conn.sendall(format_p2s_response(STATUS_NOT_FOUND).encode("utf-8"))
+                else:
+                    conn.sendall(format_p2s_response(STATUS_OK, matches).encode("utf-8"))
+
+            elif method == METHOD_LIST:
+                with db_lock:
+                    all_records = list(index)
+                conn.sendall(format_p2s_response(STATUS_OK, all_records).encode("utf-8"))
+
+            else:
+                conn.sendall(format_p2s_response(STATUS_BAD_REQUEST).encode("utf-8"))
+
+    except ConnectionResetError:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _remove_all_for_host(announced_host)
+
+
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", SERVER_PORT))
+    sock.listen()
+    print(f"[server] listening on port {SERVER_PORT}")
+
+    while True:
+        conn, addr = sock.accept()
+        print(f"[server] connection from {addr}")
+        t = threading.Thread(target=_handle_peer, args=(conn, addr), daemon=True)
+        t.start()
+
+
+if __name__ == "__main__":
+    main()
