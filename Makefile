@@ -14,7 +14,10 @@ run-peer:
 	PYTHONPATH=. $(PY) -m src.peer --peer-dir $(PEER_DIR) --server-host 127.0.0.1
 
 test:
-	$(PY) -m unittest discover -s tests -p "test_*.py"
+	PYTHONPATH=. $(PY) -m pytest tests/ -v
+
+test-coverage:
+	PYTHONPATH=. $(PY) -m pytest tests/ -v --cov=src --cov-report=term-missing
 
 clean:
 	rm -rf $(VENV) __pycache__ src/__pycache__ tests/__pycache__

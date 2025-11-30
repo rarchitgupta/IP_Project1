@@ -3,8 +3,6 @@ import threading
 
 from src.constants import (
     SERVER_PORT,
-    BUFFER_SIZE,
-    CRLF,
     PROTOCOL_VERSION,
     STATUS_OK,
     STATUS_BAD_REQUEST,
@@ -15,29 +13,13 @@ from src.constants import (
     METHOD_LIST,
 )
 from src.protocol import parse_p2s_request, format_p2s_response
+from src.socket_utils import recv_message_text
 
 
 # In-memory database
 peers = {}  # hostname -> upload port
 index = []  # list of tuples: (rfc_number, title, hostname, port)
 db_lock = threading.Lock()
-
-
-def _recv_one_message(conn: socket.socket) -> str | None:
-    """
-    Read until we get CRLFCRLF, return the message text (including headers),
-    or None if the connection closed.
-    """
-    buf = b""
-    while True:
-        chunk = conn.recv(BUFFER_SIZE)
-        if not chunk:
-            return None
-        buf += chunk
-        if b"\r\n\r\n" in buf:
-            msg, _rest = buf.split(b"\r\n\r\n", 1)
-            # Add back the delimiter so protocol parsing sees the blank line end.
-            return (msg + b"\r\n\r\n").decode("utf-8", errors="replace")
 
 
 def _remove_all_for_host(hostname: str):
@@ -54,9 +36,9 @@ def _handle_peer(conn: socket.socket, addr):
     announced_host = None
     try:
         while True:
-            msg = _recv_one_message(conn)
+            msg = recv_message_text(conn)
             if msg is None:
-                break  # peer disconnected
+                break
 
             req = parse_p2s_request(msg)
             if req is None:
@@ -77,14 +59,10 @@ def _handle_peer(conn: socket.socket, addr):
                 rfc_number = req["rfc_number"]
 
                 with db_lock:
-                    # Keep peer list updated
                     peers[host] = port
-
-                    # Remove duplicate (same host, same rfc) then add newest to front
                     index[:] = [rec for rec in index if not (rec[0] == rfc_number and rec[2] == host)]
                     index.insert(0, (rfc_number, title, host, port))
 
-                # Echo back the provided info
                 conn.sendall(format_p2s_response(STATUS_OK, [(rfc_number, title, host, port)]).encode("utf-8"))
 
             elif method == METHOD_LOOKUP:

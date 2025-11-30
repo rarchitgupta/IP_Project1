@@ -3,7 +3,6 @@ import os
 import platform
 import socket
 import threading
-import time
 from datetime import datetime, timezone
 
 from src.constants import (
@@ -20,8 +19,12 @@ from src.constants import (
     HEADER_LAST_MODIFIED,
     HEADER_CONTENT_LENGTH,
     HEADER_CONTENT_TYPE,
+    METHOD_ADD,
+    METHOD_LOOKUP,
+    METHOD_LIST,
 )
-from src.protocol import parse_p2p_request, format_p2p_response
+from src.protocol import parse_p2p_request, format_p2p_response, format_p2s_request, parse_p2s_response
+from src.socket_utils import recv_until_marker, recv_p2s_response
 
 
 def http_date(ts=None) -> str:
@@ -32,100 +35,9 @@ def http_date(ts=None) -> str:
     return dt.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 
-def recv_until_double_crlf(sock: socket.socket) -> bytes:
-    buf = b""
-    while b"\r\n\r\n" not in buf:
-        chunk = sock.recv(BUFFER_SIZE)
-        if not chunk:
-            break
-        buf += chunk
-    return buf
-
-
 def read_p2s_response(sock: socket.socket) -> str:
-    """
-    Server response has:
-      status line
-      blank line
-      data lines...
-      blank line
-    We read until we see the SECOND blank line.
-    """
-    buf = b""
-
-    # 1) read until first CRLFCRLF
-    while b"\r\n\r\n" not in buf:
-        chunk = sock.recv(BUFFER_SIZE)
-        if not chunk:
-            return ""
-        buf += chunk
-
-    head, rest = buf.split(b"\r\n\r\n", 1)
-
-    # 2) now read until the message ends with CRLFCRLF (blank line after data)
-    while b"\r\n\r\n" not in rest:
-        chunk = sock.recv(BUFFER_SIZE)
-        if not chunk:
-            break
-        rest += chunk
-
-    full = head + b"\r\n\r\n" + rest
-    return full.decode("utf-8", errors="replace")
-
-
-def parse_p2s_response(text: str):
-    """
-    Returns (status_code:int, records:list[(rfc,title,host,port)])
-    """
-    lines = text.split(CRLF)
-    if not lines or not lines[0].strip():
-        return None, []
-
-    status_line = lines[0].split()
-    if len(status_line) < 2:
-        return None, []
-
-    try:
-        status_code = int(status_line[1])
-    except ValueError:
-        return None, []
-
-    # Data starts after the first blank line
-    try:
-        blank_idx = lines.index("")
-    except ValueError:
-        return status_code, []
-
-    records = []
-    for line in lines[blank_idx + 1 :]:
-        if line == "":
-            break
-        # rfc title hostname port  (title can contain spaces!)
-        parts = line.split()
-        if len(parts) < 3:
-            continue
-        rfc = int(parts[0])
-        port = int(parts[-1])
-        host = parts[-2]
-        title = " ".join(parts[1:-2])
-        records.append((rfc, title, host, port))
-
-    return status_code, records
-
-
-def format_p2s_request(method: str, rfc_number, host: str, port: int, title: str = "") -> str:
-    if method == "LIST":
-        first = f"LIST ALL {PROTOCOL_VERSION}{CRLF}"
-    else:
-        first = f"{method} RFC {rfc_number} {PROTOCOL_VERSION}{CRLF}"
-
-    out = first
-    out += f"Host: {host}{CRLF}"
-    out += f"Port: {port}{CRLF}"
-    if method in ("ADD", "LOOKUP"):
-        out += f"Title: {title}{CRLF}"
-    out += CRLF
-    return out
+    buf = recv_p2s_response(sock)
+    return buf.decode("utf-8", errors="replace")
 
 
 def find_local_rfcs(peer_dir: str):
@@ -169,7 +81,7 @@ class UploadServer:
         self.peer_dir = peer_dir
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("0.0.0.0", 0))  # ephemeral
+        self.sock.bind(("0.0.0.0", 0))
         self.sock.listen()
         self.port = self.sock.getsockname()[1]
         self.running = True
@@ -196,7 +108,10 @@ class UploadServer:
 
     def _handle(self, conn: socket.socket, addr):
         try:
-            raw = recv_until_double_crlf(conn)
+            raw = recv_until_marker(conn, b"\r\n\r\n")
+            if raw is None:
+                return
+
             req = parse_p2p_request(raw)
             if req is None:
                 conn.sendall(format_p2p_response(STATUS_BAD_REQUEST, headers={"Content-Length": "0"}, data=b""))
@@ -233,10 +148,6 @@ class UploadServer:
 
 
 def download_rfc(from_host: str, from_port: int, rfc_number: int, save_path: str) -> tuple[bool, bytes]:
-    """
-    Connect to a peer upload server and GET the RFC.
-    Returns (success, file_bytes).
-    """
     s = socket.create_connection((from_host, from_port), timeout=10)
     try:
         req = (
@@ -247,15 +158,8 @@ def download_rfc(from_host: str, from_port: int, rfc_number: int, save_path: str
         )
         s.sendall(req.encode("utf-8"))
 
-        # Read headers
-        buf = b""
-        while b"\r\n\r\n" not in buf:
-            chunk = s.recv(BUFFER_SIZE)
-            if not chunk:
-                break
-            buf += chunk
-
-        if b"\r\n\r\n" not in buf:
+        buf = recv_until_marker(s, b"\r\n\r\n")
+        if buf is None or b"\r\n\r\n" not in buf:
             return False, b""
 
         header_bytes, rest = buf.split(b"\r\n\r\n", 1)
@@ -340,7 +244,7 @@ def main():
                 break
 
             if cmd == "list":
-                req = format_p2s_request("LIST", "ALL", my_host, my_port, "")
+                req = format_p2s_request(METHOD_LIST, "ALL", my_host, my_port, "")
                 server_sock.sendall(req.encode("utf-8"))
                 resp = read_p2s_response(server_sock)
                 print(resp.strip())
@@ -352,7 +256,7 @@ def main():
                     print("Usage: lookup <rfc_number>")
                     continue
                 rfc = int(parts[1])
-                req = format_p2s_request("LOOKUP", rfc, my_host, my_port, f"RFC {rfc}")
+                req = format_p2s_request(METHOD_LOOKUP, rfc, my_host, my_port, f"RFC {rfc}")
                 server_sock.sendall(req.encode("utf-8"))
                 resp = read_p2s_response(server_sock)
                 print(resp.strip())
@@ -365,8 +269,7 @@ def main():
                     continue
                 rfc = int(parts[1])
 
-                # Ask server who has it
-                req = format_p2s_request("LOOKUP", rfc, my_host, my_port, f"RFC {rfc}")
+                req = format_p2s_request(METHOD_LOOKUP, rfc, my_host, my_port, f"RFC {rfc}")
                 server_sock.sendall(req.encode("utf-8"))
                 resp = read_p2s_response(server_sock)
                 status, records = parse_p2s_response(resp)
@@ -375,7 +278,6 @@ def main():
                     print(resp.strip())
                     continue
 
-                # pick the first peer that isn't me
                 chosen = None
                 chosen_title = None
                 for rr, title, host, port in records:
@@ -399,8 +301,7 @@ def main():
 
                 print(f"[peer] saved to {save_path}")
 
-                # Add to index after download
-                req = format_p2s_request("ADD", rfc, my_host, my_port, chosen_title or f"RFC {rfc}")
+                req = format_p2s_request(METHOD_ADD, rfc, my_host, my_port, chosen_title or f"RFC {rfc}")
                 server_sock.sendall(req.encode("utf-8"))
                 resp2 = read_p2s_response(server_sock)
                 print(resp2.strip())

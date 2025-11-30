@@ -29,6 +29,10 @@ METHOD_LOOKUP = "LOOKUP"
 METHOD_LIST = "LIST"
 METHOD_GET = "GET"
 
+# Special values
+RFC_ALL = "ALL"
+KEYWORD_RFC = "RFC"
+
 # Headers
 HEADER_HOST = "Host"
 HEADER_PORT = "Port"
