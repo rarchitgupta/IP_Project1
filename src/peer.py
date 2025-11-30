@@ -247,7 +247,8 @@ def main():
                 req = format_p2s_request(METHOD_LIST, "ALL", my_host, my_port, "")
                 server_sock.sendall(req.encode("utf-8"))
                 resp = read_p2s_response(server_sock)
-                print(resp.strip())
+                # Print response, removing only trailing whitespace to preserve status line
+                print(resp.rstrip())
                 continue
 
             if cmd.startswith("lookup "):
@@ -259,7 +260,8 @@ def main():
                 req = format_p2s_request(METHOD_LOOKUP, rfc, my_host, my_port, f"RFC {rfc}")
                 server_sock.sendall(req.encode("utf-8"))
                 resp = read_p2s_response(server_sock)
-                print(resp.strip())
+                # Print response, removing only trailing whitespace to preserve status line
+                print(resp.rstrip())
                 continue
 
             if cmd.startswith("get "):

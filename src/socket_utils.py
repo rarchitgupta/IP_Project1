@@ -49,7 +49,13 @@ def recv_p2s_response(sock: socket.socket) -> bytes:
     head, rest = buf.split(b"\r\n\r\n", 1)
 
     # Read until we see CRLFCRLF again (blank line after data)
+    # Note: For responses with no records (like 404), rest may already be just "\r\n"
+    # In that case, we should return immediately instead of blocking.
     while b"\r\n\r\n" not in rest:
+        # Check if rest is just a blank line (empty record section)
+        if rest == b"\r\n":
+            return head + b"\r\n\r\n" + rest
+        
         chunk = sock.recv(BUFFER_SIZE)
         if not chunk:
             break
