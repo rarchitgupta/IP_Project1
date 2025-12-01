@@ -34,6 +34,7 @@ def _remove_all_for_host(hostname: str):
 
 def _handle_peer(conn: socket.socket, addr):
     announced_host = None
+    announced_port = None
     try:
         while True:
             msg = recv_message_text(conn)
@@ -54,6 +55,11 @@ def _handle_peer(conn: socket.socket, addr):
             port = req["port"]
             title = req.get("title", "")
             announced_host = host
+            announced_port = port
+            
+            # Log peer connection info on first request
+            if method == METHOD_ADD or method == METHOD_LOOKUP or method == METHOD_LIST:
+                pass  # Info will be logged with each operation
 
             if method == METHOD_ADD:
                 rfc_number = req["rfc_number"]
@@ -63,6 +69,7 @@ def _handle_peer(conn: socket.socket, addr):
                     index[:] = [rec for rec in index if not (rec[0] == rfc_number and rec[2] == host)]
                     index.insert(0, (rfc_number, title, host, port))
 
+                print(f"[server] added RFC {rfc_number}: {title} from {host}:{port}")
                 conn.sendall(format_p2s_response(STATUS_OK, [(rfc_number, title, host, port)]).encode("utf-8"))
 
             elif method == METHOD_LOOKUP:
@@ -90,6 +97,8 @@ def _handle_peer(conn: socket.socket, addr):
             conn.close()
         except Exception:
             pass
+        if announced_host and announced_port:
+            print(f"[server] peer {announced_host}:{announced_port} disconnected")
         _remove_all_for_host(announced_host)
 
 
@@ -102,7 +111,9 @@ def main():
 
     while True:
         conn, addr = sock.accept()
-        print(f"[server] connection from {addr}")
+        # addr is (ip, port) tuple
+        ip, port = addr
+        print(f"[server] connection from {ip}:{port}")
         t = threading.Thread(target=_handle_peer, args=(conn, addr), daemon=True)
         t.start()
 

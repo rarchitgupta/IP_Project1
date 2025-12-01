@@ -6,6 +6,9 @@ setup:
 	python3 -m venv $(VENV)
 	$(PIP) install -r requirements.txt
 
+setup-demo:
+	bash setup-demo.sh
+
 run-server:
 	PYTHONPATH=. $(PY) -m src.server
 

@@ -223,6 +223,7 @@ def main():
     if local:
         print("[peer] registering local RFCs with server...")
     for rfc_number, title, _path in local:
+        print(f"[peer] registering RFC {rfc_number}: {title}")
         req = format_p2s_request("ADD", rfc_number, my_host, my_port, title)
         server_sock.sendall(req.encode("utf-8"))
         resp = read_p2s_response(server_sock)
