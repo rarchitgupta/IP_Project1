@@ -17,19 +17,18 @@ from src.socket_utils import recv_message_text
 
 
 # In-memory database
-peers = {}  # hostname -> upload port
-index = []  # list of tuples: (rfc_number, title, hostname, port)
+peers = set()  # set of (hostname, upload_port)
+index = []     # list of tuples: (rfc_number, title, hostname, upload_port)
 db_lock = threading.Lock()
 
-
-def _remove_all_for_host(hostname: str):
+def _remove_all_for_peer(hostname: str, upload_port: int):
     global index, peers
-    if not hostname:
+    if not hostname or upload_port is None:
         return
     with db_lock:
-        if hostname in peers:
-            del peers[hostname]
-        index = [rec for rec in index if rec[2] != hostname]
+        peers.discard((hostname, upload_port))
+        index = [rec for rec in index if not (rec[2] == hostname and rec[3] == upload_port)]
+
 
 
 def _handle_peer(conn: socket.socket, addr):
@@ -65,9 +64,10 @@ def _handle_peer(conn: socket.socket, addr):
                 rfc_number = req["rfc_number"]
 
                 with db_lock:
-                    peers[host] = port
-                    index[:] = [rec for rec in index if not (rec[0] == rfc_number and rec[2] == host)]
+                    peers.add((host, port))
+                    index[:] = [rec for rec in index if not (rec[0] == rfc_number and rec[2] == host and rec[3] == port)]
                     index.insert(0, (rfc_number, title, host, port))
+
 
                 print(f"[server] added RFC {rfc_number}: {title} from {host}:{port}")
                 conn.sendall(format_p2s_response(STATUS_OK, [(rfc_number, title, host, port)]).encode("utf-8"))
@@ -99,7 +99,7 @@ def _handle_peer(conn: socket.socket, addr):
             pass
         if announced_host and announced_port:
             print(f"[server] peer {announced_host}:{announced_port} disconnected")
-        _remove_all_for_host(announced_host)
+        _remove_all_for_peer(announced_host, announced_port)
 
 
 def main():

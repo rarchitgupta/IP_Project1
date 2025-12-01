@@ -107,23 +107,36 @@ class UploadServer:
             threading.Thread(target=self._handle, args=(conn, addr), daemon=True).start()
 
     def _handle(self, conn: socket.socket, addr):
+        ip, port = addr
+        print(f"[peer][upload] connection from {ip}:{port}")
+
         try:
             raw = recv_until_marker(conn, b"\r\n\r\n")
             if raw is None:
+                print("[peer][upload] connection closed before request (no data)")
                 return
 
             req = parse_p2p_request(raw)
             if req is None:
+                print("[peer][upload] 400 Bad Request (failed to parse)")
                 conn.sendall(format_p2p_response(STATUS_BAD_REQUEST, headers={"Content-Length": "0"}, data=b""))
                 return
 
             if req["version"] != PROTOCOL_VERSION:
-                conn.sendall(format_p2p_response(STATUS_VERSION_NOT_SUPPORTED, headers={"Content-Length": "0"}, data=b""))
+                print(f"[peer][upload] 505 Version Not Supported: {req['version']}")
+                conn.sendall(
+                    format_p2p_response(STATUS_VERSION_NOT_SUPPORTED, headers={"Content-Length": "0"}, data=b"")
+                )
                 return
 
             rfc_number = req["rfc_number"]
+            requester_host = req.get("host", "?")
+            requester_os = req.get("os", "?")
+            print(f"[peer][upload] GET RFC {rfc_number} from {requester_host} (OS: {requester_os})")
+
             path = os.path.join(self.peer_dir, f"rfc{rfc_number}.txt")
             if not os.path.exists(path):
+                print(f"[peer][upload] 404 Not Found: rfc{rfc_number}.txt")
                 conn.sendall(format_p2p_response(STATUS_NOT_FOUND, headers={"Content-Length": "0"}, data=b""))
                 return
 
@@ -138,13 +151,18 @@ class UploadServer:
                 HEADER_CONTENT_LENGTH: str(len(data)),
                 HEADER_CONTENT_TYPE: "text/plain",
             }
+
+            print(f"[peer][upload] 200 OK: uploading RFC {rfc_number} ({len(data)} bytes)")
             conn.sendall(format_p2p_response(STATUS_OK, headers=headers, data=data))
+            print(f"[peer][upload] finished uploading RFC {rfc_number} to {ip}:{port}")
 
         finally:
             try:
                 conn.close()
             except Exception:
                 pass
+            print(f"[peer][upload] connection closed {ip}:{port}")
+
 
 
 def download_rfc(from_host: str, from_port: int, rfc_number: int, save_path: str) -> tuple[bool, bytes]:
