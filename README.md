@@ -2,88 +2,52 @@
 
 A Python implementation of a P2P file-sharing system for downloading RFCs (Requests for Comments).
 
-## Project Structure
+Run everything from the project root (the folder that contains Makefile and src/).
 
-```
-project_1/
-├── src/                    # Source code
-│   ├── __init__.py
-│   ├── server.py          # Central server
-│   ├── peer.py            # Peer client implementation
-│   ├── protocol.py        # Protocol parsing/formatting utilities
-│   └── constants.py       # Constants and configuration
-├── tests/                 # Unit tests
-├── data/                  # Sample RFCs and peer data
-├── Makefile              # Build commands
-├── requirements.txt      # Python dependencies
-└── README.md
-```
+In the project root, run these commands to create two peers with a few sample RFC files.
+	mkdir -p data/peerA data/peerB
 
-## Setup & Installation
+# Peer A has RFC 123 and RFC 2000
+printf "TCP/IP Illustrated\n(peerA content)\n" > data/peerA/rfc123.txt
+printf "Sockets 101\n(peerA content)\n" > data/peerA/rfc2000.txt
 
-1. **Set up virtual environment:**
-   ```bash
-   make setup
-   ```
+# Peer B has RFC 2345
+printf "Routing Protocols\n(peerB content)\n" > data/peerB/rfc2345.txt
 
-2. **Activate virtual environment:**
-   ```bash
-   source .venv/bin/activate
-   ```
-
-## Running the System
-
-### Start the Central Server
-
-```bash
+Terminal A (Server): from the project root, run-
+make
 make run-server
-```
 
-The server will listen on port 7734.
+Starting Peers
+Terminal B: start Peer A
+make run-peer PEER_DIR=data/peerA
+Terminal C: start Peer B
+make run-peer PEER_DIR=data/peerB
 
-### Start a Peer
+LIST ALL - Now to demonstrate LIST ALL from Peer A (Terminal B):
+p2p> list
 
-```bash
-make run-peer PEER_DIR=/path/to/peer/data
-```
+Expected: P2P-CI/1.0 200 OK followed by one line per RFC record, e.g.:
+123 TCP/IP Illustrated <peerA> <portA>
+2345 Routing Protocols <peerB> <portB>
 
-Example with a test peer directory:
+LOOKUP - Next to demonstrate LOOKUP for Peer B’s RFC from Peer A:
+p2p> lookup 2345
 
-```bash
-mkdir -p data/peer1
-make run-peer PEER_DIR=data/peer1
-```
+Expected: 200 OK and at least one matching line for RFC 2345 on peerB.
 
-## Development
+GET - Download RFC from Peer B to Peer A (GET) and peer disconnect cleanup
+	From Peer A (Terminal B), download RFC 2345:
+	p2p> get 2345
 
-### Run Tests
+Expected: Peer A shows a download message, saves file into data/peerA/rfc2345.txt, and then sends an ADD
+to the server.
 
-```bash
-make test
-```
+Now close one peer (e.g., Peer B):
+In Peer B terminal: 
+p2p> quit
+Server should remove peer B’s peer record and index entries when the connection closes.
 
-### Clean Up
-
-```bash
-make clean
-```
-
-## Implementation Notes
-
-- **Language:** Python 3
-- **Concurrency:** Uses multiprocessing for handling multiple peer connections
-- **Protocol:** Custom P2P-CI protocol over TCP
-- **Port:** Server runs on port 7734 (well-known port)
-
-## Protocols
-
-### P2S (Peer-to-Server)
-- **ADD:** Register RFC at server
-- **LOOKUP:** Find peers with specific RFC
-- **LIST:** Get complete RFC index
-
-### P2P (Peer-to-Peer)
-- **GET:** Download RFC from peer
-- **Response:** File data with headers
-
-See PROJECT.md for detailed protocol specifications.
+Then from Peer A: 
+p2p> list
+Expected: peer B’s RFC entries disappear from the list output.
