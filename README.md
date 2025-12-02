@@ -9,6 +9,7 @@ mkdir -p data/peerA data/peerB
 
 # Peer A has RFC 123 and RFC 2000
 printf "TCP/IP Illustrated\n(peerA content)\n" > data/peerA/rfc123.txt
+
 printf "Sockets 101\n(peerA content)\n" > data/peerA/rfc2000.txt
 
 # Peer B has RFC 2345
