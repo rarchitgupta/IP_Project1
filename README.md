@@ -7,19 +7,19 @@ Run everything from the project root (the folder that contains Makefile and src/
 1. Create Sample Peers and RFC Files
 mkdir -p data/peerA data/peerB
 
-# Peer A has RFC 123 and RFC 2000
+Peer A has RFC 123 and RFC 2000
 printf "TCP/IP Illustrated\n(peerA content)\n" > data/peerA/rfc123.txt
 
 printf "Sockets 101\n(peerA content)\n" > data/peerA/rfc2000.txt
 
-# Peer B has RFC 2345
+Peer B has RFC 2345
 printf "Routing Protocols\n(peerB content)\n" > data/peerB/rfc2345.txt
 
 2. Start the Server (Terminal A)
 
 From the project root:
 
-make
+make setup
 make run-server
 
 
